@@ -1,5 +1,4 @@
 #include "config.hpp"
-#include "fmt_describe.hpp"
 #include "server.hpp"
 #include "url.hpp"
 
@@ -7,7 +6,6 @@
 #include <boost/scope_exit.hpp>
 #include <boost/variant2.hpp>
 #include <fmt/format.h>
-#include <fmt/ostream.h>
 
 #include <iostream>
 
