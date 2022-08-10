@@ -90,6 +90,22 @@ send_redirect(Stream &stream, std::string loc)
     co_await send_and_die(stream, response);
 }
 
+template < class Stream >
+asio::awaitable< void >
+send_error(Stream &stream, beast::http::status stat, std::string message)
+{
+    using asio::redirect_error;
+    using asio::use_awaitable;
+    using asio::experimental::deferred;
+
+    auto response = beast::http::response< beast::http::string_body >();
+    response.result(stat);
+    response.keep_alive(false);
+    response.body() = std::move(message);
+    response.prepare_payload();
+    co_await send_and_die(stream, response);
+}
+
 asio::awaitable< void >
 serve_http(tcp::socket sock, std::string https_endpoint)
 {
@@ -98,6 +114,21 @@ serve_http(tcp::socket sock, std::string https_endpoint)
     auto rxbuf  = beast::flat_buffer();
     auto parser = beast::http::request_parser< beast::http::empty_body >();
     co_await beast::http::async_read(sock, rxbuf, parser, deferred);
+
+    static const auto re      = std::regex("(/websocket-\\d+)(/.*)?", std::regex_constants::icase | std::regex_constants::optimize);
+    auto              match   = std::cmatch();
+    auto             &request = parser.get();
+    if (std::regex_match(request.target().begin(), request.target().end(), match, re))
+    {
+        co_await send_redirect(sock, fmt::format("{}{}", https_endpoint, match[0].str()));
+    }
+    else
+    {
+        co_await send_error(
+            sock,
+            beast::http::status::not_found,
+            fmt::format("resource {} is not recognised\r\n", std::string_view(request.target().data(), request.target().size())));
+    }
 
     auto response = beast::http::response< beast::http::string_body >();
     auto newloc   = fmt::format("{}/websocket-5", https_endpoint);
@@ -117,26 +148,6 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
         co_await acceptor.async_accept(sock, deferred);
         co_spawn(exec, serve_http(std::move(sock), https_endpoint), detached);
     }
-}
-
-asio::awaitable< void >
-send_error(ssl::stream< tcp::socket > &stream, beast::http::status stat, std::string message)
-{
-    using asio::redirect_error;
-    using asio::use_awaitable;
-    using asio::experimental::deferred;
-
-    auto response = beast::http::response< beast::http::string_body >();
-    response.result(stat);
-    response.keep_alive(false);
-    response.body() = std::move(message);
-    response.prepare_payload();
-    co_await beast::http::async_write(stream, response, deferred);
-    auto ec = error_code();
-    co_await stream.async_shutdown(asio::redirect_error(use_awaitable, ec));
-    auto &sock = stream.next_layer();
-    sock.shutdown(asio::socket_base::shutdown_both, ec);
-    sock.close();
 }
 
 asio::awaitable< void >
