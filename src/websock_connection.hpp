@@ -40,7 +40,10 @@ struct websock_connection
     query_ssl();
 
     asio::awaitable< void >
-    try_handshake(error_code &ec, beast::websocket::response_type &response, std::string hostname, std::string target);
+    try_handshake(error_code                      &ec,
+                  beast::websocket::response_type &response,
+                  std::string                      hostname,
+                  std::string                      target);
 
     asio::awaitable< std::size_t >
     send_text(std::string const &msg);
@@ -49,7 +52,7 @@ struct websock_connection
     receive_text();
 
     asio::awaitable< void >
-    close(beast::websocket::close_reason const& reason);
+    close(beast::websocket::close_reason const &reason);
 
     var_type           var_;
     beast::flat_buffer rxbuffer_;

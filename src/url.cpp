@@ -32,7 +32,8 @@ deduce_port(std::string const &scheme, std::string port)
         else if (iequals(scheme, "wss") or iequals(scheme, "https"))
             port = "https";
         else
-            throw system_error(asio::error::invalid_argument, "can't deduce port");
+            throw system_error(asio::error::invalid_argument,
+                               "can't deduce port");
     }
 
     return port;
@@ -50,10 +51,12 @@ deduce_transport(std::string const &scheme, std::string const &port)
         if (iequals(port, "http") or iequals(port, "ws") or iequals(port, "80"))
             return transport_type::tcp;
 
-        if (iequals(port, "https") or iequals(port, "wss") or iequals(port, "443"))
+        if (iequals(port, "https") or iequals(port, "wss") or
+            iequals(port, "443"))
             return transport_type::tls;
 
-        throw system_error(asio::error::invalid_argument, "cannot deduce transport");
+        throw system_error(asio::error::invalid_argument,
+                           "cannot deduce transport");
     }
     else
     {
@@ -68,7 +71,9 @@ deduce_transport(std::string const &scheme, std::string const &port)
 }
 
 std::string
-build_target(std::string const &path, std::string const &query, std::string const &fragment)
+build_target(std::string const &path,
+             std::string const &query,
+             std::string const &fragment)
 {
     std::string result;
 
@@ -93,13 +98,15 @@ decode_url(std::string const &url)
 {
     //
     // This algorithm uses a regex to crack a fully formed URL.
-    // It is by no means perfect, but is "good enough" for the common cases that will be found in this library.
-    // For example, it does not handle the username/password prefex on the authority (which you should not be using
+    // It is by no means perfect, but is "good enough" for the common cases that
+    // will be found in this library. For example, it does not handle the
+    // username/password prefex on the authority (which you should not be using
     // anyway)
     //
-    static auto url_regex = std::regex(R"regex((ws|wss|http|https)://([^/ :]+):?([^/ ]*)(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*))regex",
-                                       std::regex_constants::icase);
-    auto        match     = std::smatch();
+    static auto url_regex = std::regex(
+        R"regex((ws|wss|http|https)://([^/ :]+):?([^/ ]*)(/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*))regex",
+        std::regex_constants::icase);
+    auto match = std::smatch();
     if (not std::regex_match(url, match, url_regex))
         throw system_error(asio::error::invalid_argument, "invalid url");
 

@@ -13,7 +13,9 @@ namespace blog
 {
 
 asio::awaitable< std::unique_ptr< websock_connection > >
-connect_websock(ssl::context &sslctx, std::string urlstr, int const redirect_limit = 5)
+connect_websock(ssl::context &sslctx,
+                std::string   urlstr,
+                int const     redirect_limit = 5)
 {
     using asio::experimental::deferred;
 
@@ -27,7 +29,8 @@ again:
 
     auto result = std::unique_ptr< websock_connection >();
     if (decoded.transport == transport_type::tls)
-        result = std::make_unique< websock_connection >(ssl::stream< tcp::socket >(ex, sslctx));
+        result = std::make_unique< websock_connection >(
+            ssl::stream< tcp::socket >(ex, sslctx));
     else
         result = std::make_unique< websock_connection >(tcp::socket(ex));
 
@@ -35,23 +38,30 @@ again:
     auto *tls  = result->query_ssl();
 
     auto resolver   = tcp::resolver(ex);
-    auto ep_results = co_await resolver.async_resolve(decoded.hostname, decoded.service, deferred);
+    auto ep_results = co_await resolver.async_resolve(
+        decoded.hostname, decoded.service, deferred);
     co_await asio::async_connect(sock, ep_results, deferred);
     if (tls)
     {
-        if (!SSL_set_tlsext_host_name(tls->native_handle(), decoded.hostname.c_str()))
-            throw system_error(error_code { static_cast< int >(::ERR_get_error()), asio::error::get_ssl_category() });
+        if (!SSL_set_tlsext_host_name(tls->native_handle(),
+                                      decoded.hostname.c_str()))
+            throw system_error(
+                error_code { static_cast< int >(::ERR_get_error()),
+                             asio::error::get_ssl_category() });
         co_await tls->async_handshake(ssl::stream_base::client, deferred);
     }
 
     auto ec       = error_code();
     auto response = beast::websocket::response_type();
     fmt::print("...handshake\n");
-    co_await result->try_handshake(ec, response, decoded.hostname, decoded.path_etc);
+    co_await result->try_handshake(
+        ec, response, decoded.hostname, decoded.path_etc);
 
     if (ec)
     {
-        fmt::print("...error: {}\n{}", ec.message(), boost::lexical_cast< std::string >(response.base()));
+        fmt::print("...error: {}\n{}",
+                   ec.message(),
+                   boost::lexical_cast< std::string >(response.base()));
         auto http_result = response.result_int();
         switch (response.result())
         {
@@ -94,7 +104,8 @@ again:
     else
     {
         // successful handshake
-        fmt::print("...success\n{}", boost::lexical_cast< std::string >(response.base()));
+        fmt::print("...success\n{}",
+                   boost::lexical_cast< std::string >(response.base()));
     }
 
     co_return result;
@@ -111,11 +122,13 @@ asio::awaitable< void >
 comain(ssl::context &sslctx, std::string initial_url)
 {
     fmt::print("enter: {}()\n", __func__);
-    // auto connection = co_await connect_websock(sslctx, "ws://websocket.com/some/part.html?foo=bar#100");
+    // auto connection = co_await connect_websock(sslctx,
+    // "ws://websocket.com/some/part.html?foo=bar#100");
     auto connection = co_await connect_websock(sslctx, initial_url, 6);
     co_await echo(*connection, "Hello, ");
     co_await echo(*connection, "World!\n");
-    co_await connection->close(beast::websocket::close_reason(beast::websocket::close_code::going_away, "thanks for the chat!"));
+    co_await connection->close(beast::websocket::close_reason(
+        beast::websocket::close_code::going_away, "thanks for the chat!"));
     co_return;
 }
 
@@ -138,21 +151,7 @@ main()
     auto initial_url = fmt::format("{}/websocket-4", svr.tcp_root());
 
     auto stop_sig = asio::cancellation_signal();
-    co_spawn(svr.get_executor(),
-             svr.run(),
-             asio::bind_cancellation_slot(stop_sig.slot(),
-                                          [](std::exception_ptr ep)
-                                          {
-                                              try
-                                              {
-                                                  if (ep)
-                                                      std::rethrow_exception(ep);
-                                              }
-                                              catch (std::exception &e)
-                                              {
-                                                  fmt::print("sever exception: {}\n", e.what());
-                                              }
-                                          }));
+    svr.run(stop_sig.slot());
 
     co_spawn(ioc,
              comain(ioctx, initial_url),

@@ -33,9 +33,12 @@ server::server(asio::any_io_executor exec)
 , tcp_root_(fmt::format("ws://{}", as_text(tcp_acceptor_.local_endpoint())))
 , tls_root_(fmt::format("wss://{}", as_text(tls_acceptor_.local_endpoint())))
 {
-    sslctx_.set_options(boost::asio::ssl::context::default_workarounds | boost::asio::ssl::context::no_sslv2 |
+    sslctx_.set_options(boost::asio::ssl::context::default_workarounds |
+                        boost::asio::ssl::context::no_sslv2 |
                         boost::asio::ssl::context::single_dh_use);
-    sslctx_.set_password_callback([](std::size_t &, ssl::context_base::password_purpose &) -> std::string { return "test"; });
+    sslctx_.set_password_callback(
+        [](std::size_t &, ssl::context_base::password_purpose &) -> std::string
+        { return "test"; });
     sslctx_.use_certificate_chain_file("server.pem");
     sslctx_.use_private_key_file("server.pem", boost::asio::ssl::context::pem);
     sslctx_.use_tmp_dh_file("dh4096.pem");
@@ -44,14 +47,16 @@ server::server(asio::any_io_executor exec)
 namespace
 {
 asio::awaitable< void >
-send_and_die(ssl::stream< tcp::socket > &stream, beast::http::response< beast::http::string_body > const &response)
+send_and_die(ssl::stream< tcp::socket >                              &stream,
+             beast::http::response< beast::http::string_body > const &response)
 {
     using asio::redirect_error;
     using asio::use_awaitable;
     using asio::experimental::deferred;
 
     auto ec = error_code();
-    co_await beast::http::async_write(stream, response, asio::redirect_error(use_awaitable, ec));
+    co_await beast::http::async_write(
+        stream, response, asio::redirect_error(use_awaitable, ec));
     if (!ec)
         co_await stream.async_shutdown(asio::redirect_error(use_awaitable, ec));
     auto &sock = stream.next_layer();
@@ -60,14 +65,16 @@ send_and_die(ssl::stream< tcp::socket > &stream, beast::http::response< beast::h
 }
 
 asio::awaitable< void >
-send_and_die(tcp::socket &sock, beast::http::response< beast::http::string_body > const &response)
+send_and_die(tcp::socket                                             &sock,
+             beast::http::response< beast::http::string_body > const &response)
 {
     using asio::redirect_error;
     using asio::use_awaitable;
     using asio::experimental::deferred;
 
     auto ec = error_code();
-    co_await beast::http::async_write(sock, response, asio::redirect_error(use_awaitable, ec));
+    co_await beast::http::async_write(
+        sock, response, asio::redirect_error(use_awaitable, ec));
     sock.shutdown(asio::socket_base::shutdown_both, ec);
     sock.close();
 }
@@ -115,19 +122,25 @@ serve_http(tcp::socket sock, std::string https_endpoint)
     auto parser = beast::http::request_parser< beast::http::empty_body >();
     co_await beast::http::async_read(sock, rxbuf, parser, deferred);
 
-    static const auto re      = std::regex("(/websocket-\\d+)(/.*)?", std::regex_constants::icase | std::regex_constants::optimize);
+    static const auto re      = std::regex("(/websocket-\\d+)(/.*)?",
+                                      std::regex_constants::icase |
+                                          std::regex_constants::optimize);
     auto              match   = std::cmatch();
     auto             &request = parser.get();
-    if (std::regex_match(request.target().begin(), request.target().end(), match, re))
+    if (std::regex_match(
+            request.target().begin(), request.target().end(), match, re))
     {
-        co_await send_redirect(sock, fmt::format("{}{}", https_endpoint, match[0].str()));
+        co_await send_redirect(
+            sock, fmt::format("{}{}", https_endpoint, match[0].str()));
     }
     else
     {
         co_await send_error(
             sock,
             beast::http::status::not_found,
-            fmt::format("resource {} is not recognised\r\n", std::string_view(request.target().data(), request.target().size())));
+            fmt::format("resource {} is not recognised\r\n",
+                        std::string_view(request.target().data(),
+                                         request.target().size())));
     }
 
     auto response = beast::http::response< beast::http::string_body >();
@@ -148,7 +161,8 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
         {
             tcp::socket sock(exec);
             co_await acceptor.async_accept(sock, deferred);
-            co_spawn(exec, serve_http(std::move(sock), https_endpoint), detached);
+            co_spawn(
+                exec, serve_http(std::move(sock), https_endpoint), detached);
         }
     }
     catch (system_error &se)
@@ -162,7 +176,8 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
 }
 
 asio::awaitable< void >
-run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > &wss, beast::flat_buffer &rxbuf)
+run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
+                beast::flat_buffer                                     &rxbuf)
 {
     using asio::experimental::deferred;
 
@@ -191,15 +206,21 @@ serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
         auto &sock = stream.next_layer();
         if (beast::websocket::is_upgrade(request))
         {
-            static const auto re =
-                std::regex("/websocket-(\\d+)(/.*)?", std::regex_constants::icase | std::regex_constants::optimize);
+            static const auto re = std::regex(
+                "/websocket-(\\d+)(/.*)?",
+                std::regex_constants::icase | std::regex_constants::optimize);
             auto match = std::cmatch();
-            if (std::regex_match(request.target().begin(), request.target().end(), match, re))
+            if (std::regex_match(request.target().begin(),
+                                 request.target().end(),
+                                 match,
+                                 re))
             {
                 auto index = ::atoi(match[1].str().c_str());
                 if (index == 0)
                 {
-                    auto wss = beast::websocket::stream< ssl::stream< tcp::socket > >(std::move(stream));
+                    auto wss =
+                        beast::websocket::stream< ssl::stream< tcp::socket > >(
+                            std::move(stream));
                     co_await wss.async_accept(request, deferred);
                     co_await run_echo_server(wss, rxbuf);
                     // serve the websocket
@@ -207,18 +228,26 @@ serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
                 else
                 {
                     // redirect to the next index down
-                    auto loc = fmt::format("{}/websocket-{}{}", https_fqdn, index - 1, match[2].str());
+                    auto loc = fmt::format("{}/websocket-{}{}",
+                                           https_fqdn,
+                                           index - 1,
+                                           match[2].str());
                     co_await send_redirect(stream, loc);
                 }
             }
             else
             {
-                co_await send_error(stream, beast::http::status::not_found, "try /websocket-5\r\n");
+                co_await send_error(stream,
+                                    beast::http::status::not_found,
+                                    "try /websocket-5\r\n");
             }
         }
         else
         {
-            co_await send_error(stream, beast::http::status::not_acceptable, "This server only accepts websocket requests\r\n");
+            co_await send_error(
+                stream,
+                beast::http::status::not_acceptable,
+                "This server only accepts websocket requests\r\n");
         }
     }
     catch (system_error &e)
@@ -232,7 +261,9 @@ serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
 }
 
 asio::awaitable< void >
-wss_server(ssl::context &sslctx, tcp::acceptor &acceptor, std::string https_fqdn)
+wss_server(ssl::context  &sslctx,
+           tcp::acceptor &acceptor,
+           std::string    https_fqdn)
 {
     using asio::detached;
     using asio::experimental::deferred;
@@ -244,7 +275,11 @@ wss_server(ssl::context &sslctx, tcp::acceptor &acceptor, std::string https_fqdn
         {
             auto sock = tcp::socket(exec);
             co_await acceptor.async_accept(sock, deferred);
-            co_spawn(exec, serve_https(ssl::stream< tcp::socket >(std::move(sock), sslctx), https_fqdn), detached);
+            co_spawn(
+                exec,
+                serve_https(ssl::stream< tcp::socket >(std::move(sock), sslctx),
+                            https_fqdn),
+                detached);
         }
     }
     catch (system_error &se)
@@ -316,29 +351,37 @@ print_exceptions(std::exception_ptr const &ep)
 
 }   // namespace
 
-asio::awaitable< void >
-server::run()
+void
+server::run(asio::cancellation_slot stop_slot)
 {
     using namespace asio::experimental::awaitable_operators;
+    using asio::bind_cancellation_slot;
     using asio::co_spawn;
     using asio::use_awaitable;
 
     fmt::print("server starting\n");
 
-    try
+    auto handler = [](std::exception_ptr ep)
     {
-        co_await (co_spawn(get_executor(), http_server(tcp_acceptor_, tls_root_), use_awaitable) &&
-                  co_spawn(get_executor(), wss_server(sslctx_, tls_acceptor_, tls_root_), use_awaitable));
-    }
-    catch (asio::multiple_exceptions &es)
-    {
-        print_exceptions(es.first_exception());
-    }
-    catch (std::exception &e)
-    {
-        print_exceptions(e);
-    }
-    co_return;
+        try
+        {
+            if (ep)
+                std::rethrow_exception(ep);
+        }
+        catch (asio::multiple_exceptions &es)
+        {
+            print_exceptions(es.first_exception());
+        }
+        catch (std::exception &e)
+        {
+            print_exceptions(e);
+        }
+    };
+
+    co_spawn(get_executor(),
+             http_server(tcp_acceptor_, tls_root_) &&
+                 wss_server(sslctx_, tls_acceptor_, tls_root_),
+             bind_cancellation_slot(stop_slot, handler));
 }
 
 }   // namespace blog

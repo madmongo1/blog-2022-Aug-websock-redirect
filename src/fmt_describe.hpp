@@ -20,10 +20,12 @@
 #include <type_traits>
 
 template < class T >
-struct fmt::formatter< T,
-                       char,
-                       std::enable_if_t< boost::describe::has_describe_bases< T >::value &&
-                                         boost::describe::has_describe_members< T >::value && !std::is_union< T >::value > >
+struct fmt::formatter<
+    T,
+    char,
+    std::enable_if_t< boost::describe::has_describe_bases< T >::value &&
+                      boost::describe::has_describe_members< T >::value &&
+                      !std::is_union< T >::value > >
 {
     constexpr auto
     parse(format_parse_context &ctx)
@@ -62,7 +64,8 @@ struct fmt::formatter< T,
 
                 first = false;
 
-                out = fmt::format_to(out, " {}", (typename decltype(D)::type const &)t);
+                out = fmt::format_to(
+                    out, " {}", (typename decltype(D)::type const &)t);
             });
 
         boost::mp11::mp_for_each< Md >(
@@ -90,7 +93,10 @@ struct fmt::formatter< T,
 };
 
 template < class T >
-struct fmt::formatter< T, char, std::enable_if_t< boost::describe::has_describe_enumerators< T >::value > >
+struct fmt::formatter<
+    T,
+    char,
+    std::enable_if_t< boost::describe::has_describe_enumerators< T >::value > >
 {
   private:
     using U = std::underlying_type_t< T >;

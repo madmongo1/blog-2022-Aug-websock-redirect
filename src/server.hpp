@@ -19,8 +19,8 @@ struct server
 {
     server(asio::any_io_executor exec);
 
-    asio::awaitable< void >
-    run();
+
+    void run  (asio::cancellation_slot stop_slot);
 
     asio::any_io_executor const &
     get_executor() const
