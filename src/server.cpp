@@ -142,10 +142,6 @@ serve_http(tcp::socket sock, std::string https_endpoint)
                         std::string_view(request.target().data(),
                                          request.target().size())));
     }
-
-    auto response = beast::http::response< beast::http::string_body >();
-    auto newloc   = fmt::format("{}/websocket-5", https_endpoint);
-    co_await send_redirect(sock, newloc);
 }
 
 asio::awaitable< void >
