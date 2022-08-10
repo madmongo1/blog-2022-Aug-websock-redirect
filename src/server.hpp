@@ -28,10 +28,19 @@ struct server
         return exec_;
     }
 
+    std::string
+    tcp_root() const
+    {
+        return tcp_root_;
+    }
+
+  private:
     asio::any_io_executor exec_;
     ssl::context          sslctx_;
     tcp::acceptor         tcp_acceptor_;
     tcp::acceptor         tls_acceptor_;
+    std::string           tcp_root_;
+    std::string           tls_root_;
 };
 
 }   // namespace blog

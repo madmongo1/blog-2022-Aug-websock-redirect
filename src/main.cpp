@@ -1,116 +1,16 @@
 #include "config.hpp"
 #include "server.hpp"
 #include "url.hpp"
+#include "websock_connection.hpp"
 
 #include <boost/lexical_cast.hpp>
 #include <boost/scope_exit.hpp>
-#include <boost/variant2.hpp>
 #include <fmt/format.h>
 
 #include <iostream>
 
 namespace blog
 {
-
-struct websock_connection
-{
-    using ws_stream  = beast::websocket::stream< tcp::socket >;
-    using wss_stream = beast::websocket::stream< ssl::stream< tcp::socket > >;
-    using var_type   = boost::variant2::variant< ws_stream, wss_stream >;
-
-    websock_connection(tcp::socket sock)
-    : var_(ws_stream(std::move(sock)))
-    {
-    }
-
-    websock_connection(ssl::stream< tcp::socket > stream)
-    : var_(wss_stream(std::move(stream)))
-    {
-    }
-
-    tcp::socket &
-    sock();
-
-    ssl::stream< tcp::socket > *
-    query_ssl();
-
-    asio::awaitable< void >
-    try_handshake(error_code &ec, beast::websocket::response_type &response, std::string hostname, std::string target);
-
-    asio::awaitable< std::size_t >
-    send_text(std::string const &msg);
-
-    asio::awaitable< std::string >
-    receive_text();
-
-    var_type           var_;
-    beast::flat_buffer rxbuffer_;
-};
-
-// helper type for the visitor #4
-template < class... Ts >
-struct overloaded : Ts...
-{
-    using Ts::operator()...;
-};
-// explicit deduction guide (not needed as of C++20)
-template < class... Ts >
-overloaded(Ts...) -> overloaded< Ts... >;
-
-asio::awaitable< std::string >
-websock_connection::receive_text()
-{
-    using asio::use_awaitable;
-
-    auto rxsize  = co_await visit([&](auto &ws) { return ws.async_read(rxbuffer_, use_awaitable); }, var_);
-    auto is_text = visit([](auto &ws) { return ws.got_text(); }, var_);
-    auto result  = beast::buffers_to_string(rxbuffer_.data());
-    rxbuffer_.consume(rxsize);
-    co_return result;
-}
-
-asio::awaitable< std::size_t >
-websock_connection::send_text(std::string const &msg)
-{
-    using asio::use_awaitable;
-
-    return visit(
-        [&](auto &ws)
-        {
-            ws.text();
-            return ws.async_write(asio::buffer(msg), use_awaitable);
-        },
-        var_);
-}
-
-tcp::socket &
-websock_connection::sock()
-{
-    return visit(overloaded { [](ws_stream &ws) -> tcp::socket & { return ws.next_layer(); },
-                              [](wss_stream &wss) -> tcp::socket & { return wss.next_layer().next_layer(); } },
-                 var_);
-}
-
-ssl::stream< tcp::socket > *
-websock_connection::query_ssl()
-{
-    return visit(overloaded { [](ws_stream &ws) -> ssl::stream< tcp::socket > * { return nullptr; },
-                              [](wss_stream &wss) -> ssl::stream< tcp::socket > * { return &wss.next_layer(); } },
-                 var_);
-}
-
-asio::awaitable< void >
-websock_connection::try_handshake(error_code                      &ec,
-                                  beast::websocket::response_type &response,
-                                  std::string                      hostname,
-                                  std::string                      target)
-{
-    using asio::redirect_error;
-    using asio::use_awaitable;
-
-    response.result(beast::http::status::unknown);
-    return visit([&](auto &ws) { return ws.async_handshake(response, hostname, target, redirect_error(use_awaitable, ec)); }, var_);
-}
 
 asio::awaitable< std::unique_ptr< websock_connection > >
 connect_websock(ssl::context &sslctx, std::string urlstr, int const redirect_limit = 5)
@@ -234,8 +134,7 @@ main()
     auto ioctx = ssl::context(ssl::context::tls_client);
 
     auto svr         = server(ioc.get_executor());
-    auto initial_url = [ep = svr.tcp_acceptor_.local_endpoint()]
-    { return fmt::format("ws://{}:{}/givemeawebsocket/", ep.address().to_string(), ep.port()); }();
+    auto initial_url = fmt::format("{}/websocket-4", svr.tcp_root());
 
     auto stop_sig = asio::cancellation_signal();
     co_spawn(svr.get_executor(),

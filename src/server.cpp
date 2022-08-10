@@ -16,11 +16,22 @@
 namespace blog
 {
 
+namespace
+{
+std::string
+as_text(tcp::endpoint ep)
+{
+    return fmt::format("{}:{}", ep.address().to_string(), ep.port());
+}
+}   // namespace
+
 server::server(asio::any_io_executor exec)
 : exec_(exec)
 , sslctx_(ssl::context_base::sslv23)
 , tcp_acceptor_(exec_, tcp::endpoint(ip::address_v4::loopback(), 0))
 , tls_acceptor_(exec_, tcp::endpoint(ip::address_v4::loopback(), 0))
+, tcp_root_(fmt::format("ws://{}", as_text(tcp_acceptor_.local_endpoint())))
+, tls_root_(fmt::format("wss://{}", as_text(tls_acceptor_.local_endpoint())))
 {
     sslctx_.set_options(boost::asio::ssl::context::default_workarounds | boost::asio::ssl::context::no_sslv2 |
                         boost::asio::ssl::context::single_dh_use);
@@ -220,11 +231,8 @@ server::run()
 
     fmt::print("server starting\n");
 
-    auto https_fqdn =
-        fmt::format("wss://{}:{}", tls_acceptor_.local_endpoint().address().to_string(), tls_acceptor_.local_endpoint().port());
-
-    co_await (co_spawn(get_executor(), http_server(tcp_acceptor_, https_fqdn), use_awaitable) &&
-              co_spawn(get_executor(), wss_server(sslctx_, tls_acceptor_, https_fqdn), use_awaitable));
+    co_await (co_spawn(get_executor(), http_server(tcp_acceptor_, tls_root_), use_awaitable) &&
+              co_spawn(get_executor(), wss_server(sslctx_, tls_acceptor_, tls_root_), use_awaitable));
 
     co_return;
 }
