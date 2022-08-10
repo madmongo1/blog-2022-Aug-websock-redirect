@@ -11,6 +11,7 @@
 #define BLOG_2022_AUG_WEBSOCK_REDIRECT_SRC_WEBSOCK_CONNECTION_HPP
 
 #include "config.hpp"
+
 #include <boost/variant2.hpp>
 
 namespace blog
@@ -47,10 +48,12 @@ struct websock_connection
     asio::awaitable< std::string >
     receive_text();
 
+    asio::awaitable< void >
+    close(beast::websocket::close_reason const& reason);
+
     var_type           var_;
     beast::flat_buffer rxbuffer_;
 };
-
 
 }   // namespace blog
 

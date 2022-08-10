@@ -142,11 +142,22 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
     using asio::experimental::deferred;
     auto exec = co_await asio::this_coro::executor;
 
-    while (1)
+    try
     {
-        tcp::socket sock(exec);
-        co_await acceptor.async_accept(sock, deferred);
-        co_spawn(exec, serve_http(std::move(sock), https_endpoint), detached);
+        while (1)
+        {
+            tcp::socket sock(exec);
+            co_await acceptor.async_accept(sock, deferred);
+            co_spawn(exec, serve_http(std::move(sock), https_endpoint), detached);
+        }
+    }
+    catch (system_error &se)
+    {
+        fmt::print("http_server: {}\n", se.code().message());
+    }
+    catch (std::exception &e)
+    {
+        fmt::print("http_server: {}\n", e.what());
     }
 }
 
@@ -210,9 +221,13 @@ serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
             co_await send_error(stream, beast::http::status::not_acceptable, "This server only accepts websocket requests\r\n");
         }
     }
+    catch (system_error &e)
+    {
+        fmt::print("serve_https: {}\n", e.code().message());
+    }
     catch (std::exception &e)
     {
-        fmt::print("https_server - exception: {}\n", e.what());
+        fmt::print("serve_https: {}\n", e.what());
     }
 }
 
@@ -223,11 +238,79 @@ wss_server(ssl::context &sslctx, tcp::acceptor &acceptor, std::string https_fqdn
     using asio::experimental::deferred;
     auto exec = co_await asio::this_coro::executor;
 
-    while (1)
+    try
     {
-        auto sock = tcp::socket(exec);
-        co_await acceptor.async_accept(sock, deferred);
-        co_spawn(exec, serve_https(ssl::stream< tcp::socket >(std::move(sock), sslctx), https_fqdn), detached);
+        while (1)
+        {
+            auto sock = tcp::socket(exec);
+            co_await acceptor.async_accept(sock, deferred);
+            co_spawn(exec, serve_https(ssl::stream< tcp::socket >(std::move(sock), sslctx), https_fqdn), detached);
+        }
+    }
+    catch (system_error &se)
+    {
+        fmt::print("wss_server: {}\n", se.code().message());
+    }
+    catch (std::exception &e)
+    {
+        fmt::print("wss_server: {}\n", e.what());
+    }
+}
+
+void
+print_exceptions(system_error &se);
+
+void
+print_exceptions(std::exception &e)
+{
+    fmt::print("server: {}\n", e.what());
+    try
+    {
+        std::rethrow_if_nested(e);
+    }
+    catch (system_error &nested)
+    {
+        print_exceptions(nested);
+    }
+    catch (std::exception &nested)
+    {
+        print_exceptions(nested);
+    }
+}
+
+void
+print_exceptions(system_error &se)
+{
+    fmt::print("server: {}\n", se.code().message());
+    try
+    {
+        std::rethrow_if_nested(se);
+    }
+    catch (system_error &nested)
+    {
+        print_exceptions(nested);
+    }
+    catch (std::exception &nested)
+    {
+        print_exceptions(nested);
+    }
+}
+
+void
+print_exceptions(std::exception_ptr const &ep)
+{
+    try
+    {
+        if (ep)
+            std::rethrow_exception(ep);
+    }
+    catch (system_error &nested)
+    {
+        print_exceptions(nested);
+    }
+    catch (std::exception &nested)
+    {
+        print_exceptions(nested);
     }
 }
 
@@ -242,9 +325,19 @@ server::run()
 
     fmt::print("server starting\n");
 
-    co_await (co_spawn(get_executor(), http_server(tcp_acceptor_, tls_root_), use_awaitable) &&
-              co_spawn(get_executor(), wss_server(sslctx_, tls_acceptor_, tls_root_), use_awaitable));
-
+    try
+    {
+        co_await (co_spawn(get_executor(), http_server(tcp_acceptor_, tls_root_), use_awaitable) &&
+                  co_spawn(get_executor(), wss_server(sslctx_, tls_acceptor_, tls_root_), use_awaitable));
+    }
+    catch (asio::multiple_exceptions &es)
+    {
+        print_exceptions(es.first_exception());
+    }
+    catch (std::exception &e)
+    {
+        print_exceptions(e);
+    }
     co_return;
 }
 

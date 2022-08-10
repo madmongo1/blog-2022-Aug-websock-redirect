@@ -49,6 +49,19 @@ websock_connection::send_text(std::string const &msg)
         var_);
 }
 
+asio::awaitable< void >
+websock_connection::close(beast::websocket::close_reason const& reason)
+{
+    using asio::use_awaitable;
+
+    return visit(
+        [&](auto &ws)
+        {
+            return ws.async_close(reason, use_awaitable);
+        },
+        var_);
+}
+
 tcp::socket &
 websock_connection::sock()
 {

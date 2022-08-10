@@ -16,8 +16,8 @@ namespace ssl   = asio::ssl;
 namespace ip    = asio::ip;
 using tcp       = ip::tcp;
 
-using boost::system::error_code;
-using boost::system::system_error;
+using ::boost::system::error_code;
+using ::boost::system::system_error;
 }   // namespace blog
 
 #endif

@@ -115,6 +115,7 @@ comain(ssl::context &sslctx, std::string initial_url)
     auto connection = co_await connect_websock(sslctx, initial_url, 6);
     co_await echo(*connection, "Hello, ");
     co_await echo(*connection, "World!\n");
+    co_await connection->close(beast::websocket::close_reason(beast::websocket::close_code::going_away, "thanks for the chat!"));
     co_return;
 }
 
