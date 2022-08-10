@@ -149,9 +149,6 @@ echo(websock_connection &conn, std::string const &msg)
 asio::awaitable< void >
 comain(ssl::context &sslctx, std::string initial_url)
 {
-    fmt::print("enter: {}()\n", __func__);
-    // auto connection = co_await connect_websock(sslctx,
-    // "ws://websocket.com/some/part.html?foo=bar#100");
     auto connection = co_await connect_websock(sslctx, initial_url, 6);
     co_await echo(*connection, "Hello, ");
     co_await echo(*connection, "World!\n");
