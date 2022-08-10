@@ -12,6 +12,15 @@
 namespace blog
 {
 
+template < class... OStreamables >
+std::string
+stitch(OStreamables &&...oss)
+{
+    std::stringstream ss;
+    ((ss << oss), ...);
+    return ss.str();
+}
+
 asio::awaitable< std::unique_ptr< websock_connection > >
 connect_websock(ssl::context &sslctx,
                 std::string   urlstr,
@@ -19,29 +28,39 @@ connect_websock(ssl::context &sslctx,
 {
     using asio::experimental::deferred;
 
+    // for convenience, take a copy of the current executor
     auto ex = co_await asio::this_coro::executor;
 
+    // number of redirects detected so far
     int redirects = 0;
 
+    // build a resolver in order tp decode te FQDNs in urls
+    auto resolver = tcp::resolver(ex);
+
+    // in the case of a redirect, we will resume processing here
 again:
     fmt::print("attempting connection: {}\n", urlstr);
+
+    // decode the URL into components
     auto decoded = decode_url(urlstr);
 
-    auto result = std::unique_ptr< websock_connection >();
-    if (decoded.transport == transport_type::tls)
-        result = std::make_unique< websock_connection >(
-            ssl::stream< tcp::socket >(ex, sslctx));
-    else
-        result = std::make_unique< websock_connection >(tcp::socket(ex));
+    // build the appropriate websocket stream type depending on whether the URL
+    // indicates a TCP or TLS transport
+    auto result = decoded.transport == transport_type::tls
+                      ? std::make_unique< websock_connection >(
+                            ssl::stream< tcp::socket >(ex, sslctx))
+                      : std::make_unique< websock_connection >(tcp::socket(ex));
 
-    auto &sock = result->sock();
-    auto *tls  = result->query_ssl();
+    // connect the underlying socket of the websocket stream to the first
+    // reachable resolved endpoint
+    co_await asio::async_connect(
+        result->sock(),
+        co_await resolver.async_resolve(
+            decoded.hostname, decoded.service, deferred),
+        deferred);
 
-    auto resolver   = tcp::resolver(ex);
-    auto ep_results = co_await resolver.async_resolve(
-        decoded.hostname, decoded.service, deferred);
-    co_await asio::async_connect(sock, ep_results, deferred);
-    if (tls)
+    // if the connection is TLS, we will want to update the hostname
+    if (auto *tls = result->query_ssl(); tls)
     {
         if (!SSL_set_tlsext_host_name(tls->native_handle(),
                                       decoded.hostname.c_str()))
@@ -51,17 +70,19 @@ again:
         co_await tls->async_handshake(ssl::stream_base::client, deferred);
     }
 
+    // some variables to receive the result of the handshake attempt
     auto ec       = error_code();
     auto response = beast::websocket::response_type();
+
+    // attempt a websocket handshake, preserving the response
     fmt::print("...handshake\n");
     co_await result->try_handshake(
         ec, response, decoded.hostname, decoded.path_etc);
 
+    // in case of error, we have three scenarios, detailed below:
     if (ec)
     {
-        fmt::print("...error: {}\n{}",
-                   ec.message(),
-                   boost::lexical_cast< std::string >(response.base()));
+        fmt::print("...error: {}\n{}", ec.message(), stitch(response.base()));
         auto http_result = response.result_int();
         switch (response.result())
         {
@@ -71,10 +92,15 @@ again:
         case beast::http::status::found:
         case beast::http::status::see_other:
         case beast::http::status::moved_permanently:
+            //
+            // Scenario 1: We have been redirected
+            //
             if (response.count(beast::http::field::location))
             {
                 if (++redirects <= redirect_limit)
                 {
+                    // perform the redirect by updating the URL and jumping to
+                    // the goto label above.
                     auto &loc = response[beast::http::field::location];
                     urlstr.assign(loc.begin(), loc.end());
                     goto again;
@@ -86,26 +112,28 @@ again:
             }
             else
             {
-                std::stringstream ss;
-                ss << "malformed redirect\r\n";
-                ss << response;
-                throw system_error(ec, ss.str());
+                //
+                // Scenario 2: we have some other HTTP response which is not an
+                // upgrade
+                //
+                throw system_error(ec,
+                                   stitch("malformed redirect\r\n", response));
             }
             break;
 
         default:
-        {
-            std::stringstream ss;
-            ss << response;
-            throw system_error(ec, ss.str());
-        }
+            //
+            // Scenario 3: Some other transport error
+            //
+            throw system_error(ec, stitch(response));
         }
     }
     else
     {
+        //
         // successful handshake
-        fmt::print("...success\n{}",
-                   boost::lexical_cast< std::string >(response.base()));
+        //
+        fmt::print("...success\n{}", stitch(response.base()));
     }
 
     co_return result;
