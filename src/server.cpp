@@ -172,6 +172,54 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
 }
 
 asio::awaitable< void >
+run_watchdog(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
+            asio::steady_timer                                     &timer,
+            std::chrono::steady_clock::time_point &timeout)
+{
+    using asio::use_awaitable;
+    using asio::redirect_error;
+
+    auto ec = error_code();
+    while(!ec)
+    {
+        timer.expires_at(timeout);
+        co_await timer.async_wait(redirect_error(use_awaitable, ec));
+    }
+}
+
+/*
+struct async_event
+{
+    using executor_type = asio::any_io_executor;
+
+    struct wait_op_base {
+        virtual void cont() = 0;
+    };
+
+    template<class Executor, class Handler>
+    struct wait_op : wait_op_base
+    {
+//        wait_op(Executor exec, Handler handler)
+//        : exec_(std::move(exec))
+//        {}
+
+
+    };
+
+    void set()
+    {
+        set_ = true;
+        if(auto waiter = std::exchange(waiter_, nullptr))
+            waiter->cont();
+    }
+
+    executor_type exec_;
+    wait_op_base* waiter_ = nullptr;
+    bool set_ = false;
+};
+*/
+
+asio::awaitable< void >
 run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
                 beast::flat_buffer                                     &rxbuf)
 {
