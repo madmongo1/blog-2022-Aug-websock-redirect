@@ -266,7 +266,12 @@ asio::awaitable< void >
 echo(websock_connection &conn, std::string const &msg)
 {
     co_await conn.send_text(msg);
-    fmt::print("{}", co_await conn.receive_text());
+    auto response = std::string();
+    do
+    {
+        response = co_await conn.receive_text();
+        fmt::print("{}", response);
+    } while (response != msg);
 }
 
 asio::awaitable< void >
@@ -287,21 +292,6 @@ main()
 {
     using namespace blog;
 
-    try
-    {
-        fmt::print(
-            "http://www.google.com/foo/bar?baz=1#10 -> {}\n",
-            target(boost::urls::url("http://www.google.com/foo/bar?baz=1#10")));
-    }
-    catch (system_error &se)
-    {
-        fmt::print("url error: {}\n", se.code().message());
-        std::exit(4);
-    }
-    catch (std::exception &e)
-    {
-        fmt::print("url error: {}\n", e.what());
-    }
     using asio::co_spawn;
     using asio::detached;
 
@@ -311,7 +301,8 @@ main()
     auto ioctx = ssl::context(ssl::context::tls_client);
 
     auto svr         = server(ioc.get_executor());
-    auto initial_url = fmt::format("{}/websocket-4", svr.tcp_root());
+    auto initial_url = fmt::format("{}/websocket-4/chat?foo=1&foo=2&bar=3#fido",
+                                   svr.tcp_root());
 
     auto stop_sig = asio::cancellation_signal();
     svr.run(stop_sig.slot());

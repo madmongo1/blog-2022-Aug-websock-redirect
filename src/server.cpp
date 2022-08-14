@@ -9,6 +9,7 @@
 #include "server.hpp"
 
 #include <boost/asio/experimental/awaitable_operators.hpp>
+#include <boost/url.hpp>
 #include <fmt/format.h>
 
 #include <regex>
@@ -122,7 +123,7 @@ serve_http(tcp::socket sock, std::string https_endpoint)
     auto parser = beast::http::request_parser< beast::http::empty_body >();
     co_await beast::http::async_read(sock, rxbuf, parser, deferred);
 
-    static const auto re      = std::regex("(/websocket-\\d+)(/.*)?",
+    static const auto re      = std::regex("(/websocket-\\d+)(/?.*)?",
                                       std::regex_constants::icase |
                                           std::regex_constants::optimize);
     auto              match   = std::cmatch();
@@ -172,58 +173,41 @@ http_server(tcp::acceptor &acceptor, std::string https_endpoint)
 }
 
 asio::awaitable< void >
-run_watchdog(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
-            asio::steady_timer                                     &timer,
-            std::chrono::steady_clock::time_point &timeout)
-{
-    using asio::use_awaitable;
-    using asio::redirect_error;
-
-    auto ec = error_code();
-    while(!ec)
-    {
-        timer.expires_at(timeout);
-        co_await timer.async_wait(redirect_error(use_awaitable, ec));
-    }
-}
-
-/*
-struct async_event
-{
-    using executor_type = asio::any_io_executor;
-
-    struct wait_op_base {
-        virtual void cont() = 0;
-    };
-
-    template<class Executor, class Handler>
-    struct wait_op : wait_op_base
-    {
-//        wait_op(Executor exec, Handler handler)
-//        : exec_(std::move(exec))
-//        {}
-
-
-    };
-
-    void set()
-    {
-        set_ = true;
-        if(auto waiter = std::exchange(waiter_, nullptr))
-            waiter->cont();
-    }
-
-    executor_type exec_;
-    wait_op_base* waiter_ = nullptr;
-    bool set_ = false;
-};
-*/
-
-asio::awaitable< void >
-run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
-                beast::flat_buffer                                     &rxbuf)
+run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > wss,
+                beast::http::request< beast::http::string_body >      &request,
+                beast::flat_buffer                                    &rxbuf)
 {
     using asio::experimental::deferred;
+
+    co_await wss.async_accept(request, deferred);
+    auto tx_buf = std::string();
+    if (auto maybe_url = boost::urls::parse_uri_reference(request.target()))
+    {
+        auto &&url = *maybe_url;
+        tx_buf     = fmt::format("Path = {}\n", url.path().to_string());
+        tx_buf += "query_params = {";
+        for (auto &&p : url.params())
+        {
+            if (p.has_value)
+                tx_buf += fmt::format(
+                    "\n    {} = {}", p.key.to_string(), p.value.to_string());
+            else
+                tx_buf += fmt::format("\n    {}", p.key.to_string());
+        }
+        tx_buf += " }\n";
+        if (url.has_fragment())
+            tx_buf +=
+                fmt::format("Fragment = {}\n", url.fragment().to_string());
+        else
+            tx_buf += fmt::format("No Fragment\n");
+    }
+    else
+    {
+        tx_buf = fmt::format("{} isn't a valid URL, but I'll allow it.\n",
+                             request.target());
+    }
+
+    co_await wss.async_write(asio::buffer(tx_buf), deferred);
 
     for (;;)
     {
@@ -235,7 +219,7 @@ run_echo_server(beast::websocket::stream< ssl::stream< tcp::socket > > &wss,
 }
 
 asio::awaitable< void >
-serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
+serve_https(ssl::stream< tcp::socket > stream)
 {
     try
     {
@@ -247,51 +231,45 @@ serve_https(ssl::stream< tcp::socket > stream, std::string https_fqdn)
         auto request = beast::http::request< beast::http::string_body >();
         co_await beast::http::async_read(stream, rxbuf, request, deferred);
 
-        auto &sock = stream.next_layer();
-        if (beast::websocket::is_upgrade(request))
-        {
-            static const auto re = std::regex(
-                "/websocket-(\\d+)(/.*)?",
-                std::regex_constants::icase | std::regex_constants::optimize);
-            auto match = std::cmatch();
-            if (std::regex_match(request.target().begin(),
-                                 request.target().end(),
-                                 match,
-                                 re))
-            {
-                auto index = ::atoi(match[1].str().c_str());
-                if (index == 0)
-                {
-                    auto wss =
-                        beast::websocket::stream< ssl::stream< tcp::socket > >(
-                            std::move(stream));
-                    co_await wss.async_accept(request, deferred);
-                    co_await run_echo_server(wss, rxbuf);
-                    // serve the websocket
-                }
-                else
-                {
-                    // redirect to the next index down
-                    auto loc = fmt::format("{}/websocket-{}{}",
-                                           https_fqdn,
-                                           index - 1,
-                                           match[2].str());
-                    co_await send_redirect(stream, loc);
-                }
-            }
-            else
-            {
-                co_await send_error(stream,
-                                    beast::http::status::not_found,
-                                    "try /websocket-5\r\n");
-            }
-        }
-        else
+        if (!beast::websocket::is_upgrade(request))
         {
             co_await send_error(
                 stream,
                 beast::http::status::not_acceptable,
                 "This server only accepts websocket requests\r\n");
+            co_return;
+        }
+
+        auto              url   = boost::urls::url_view(request.target());
+        static const auto re    = std::regex("/websocket-(\\d+)(/?.*)?",
+                                          std::regex_constants::icase |
+                                              std::regex_constants::optimize);
+        auto              match = std::cmatch();
+        if (std::regex_match(
+                request.target().begin(), request.target().end(), match, re))
+        {
+            auto index = ::atoi(match[1].str().c_str());
+            if (index == 0)
+            {
+                co_await run_echo_server(
+                    beast::websocket::stream< ssl::stream< tcp::socket > >(
+                        std::move(stream)),
+                    request,
+                    rxbuf);
+                // serve the websocket
+            }
+            else
+            {
+                // redirect to the next index down
+                auto loc =
+                    fmt::format("/websocket-{}{}", index - 1, match[2].str());
+                co_await send_redirect(stream, loc);
+            }
+        }
+        else
+        {
+            co_await send_error(
+                stream, beast::http::status::not_found, "try /websocket-5\r\n");
         }
     }
     catch (system_error &e)
@@ -319,11 +297,10 @@ wss_server(ssl::context  &sslctx,
         {
             auto sock = tcp::socket(exec);
             co_await acceptor.async_accept(sock, deferred);
-            co_spawn(
-                exec,
-                serve_https(ssl::stream< tcp::socket >(std::move(sock), sslctx),
-                            https_fqdn),
-                detached);
+            co_spawn(exec,
+                     serve_https(
+                         ssl::stream< tcp::socket >(std::move(sock), sslctx)),
+                     detached);
         }
     }
     catch (system_error &se)
